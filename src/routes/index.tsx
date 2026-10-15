@@ -1,24 +1,29 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Globe2 } from "lucide-react";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Olá, mundo!" },
+      { name: "description", content: "Um pequeno começo. Um mundo de possibilidades." },
+      { property: "og:title", content: "Olá, mundo!" },
+      { property: "og:description", content: "Um pequeno começo. Um mundo de possibilidades." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
+    <main className="hello-page">
+      <div className="hello-content">
+        <div className="hello-symbol" aria-hidden="true"><Globe2 size={32} strokeWidth={1.5} /></div>
+        <h1>Olá, mundo<span>!</span></h1>
+        <p>Um pequeno começo.<br />Um mundo de possibilidades.</p>
+      </div>
+      <footer className="hello-footer">FEITO COM SIMPLICIDADE</footer>
+    </main>
   );
 }
