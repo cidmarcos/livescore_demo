@@ -1,29 +1,41 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Globe2 } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+
+import { LivescoreApp } from "@/components/livescore/livescore-app";
+import { validateLivescoreSearch } from "@/lib/livescore/parse";
 
 export const Route = createFileRoute("/")({
+  validateSearch: validateLivescoreSearch,
   head: () => ({
     meta: [
-      { title: "Olá, mundo!" },
-      { name: "description", content: "Um pequeno começo. Um mundo de possibilidades." },
-      { property: "og:title", content: "Olá, mundo!" },
-      { property: "og:description", content: "Um pequeno começo. Um mundo de possibilidades." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { title: "LiveScore Demo" },
+      { name: "description", content: "Placar ao vivo de futebol." },
+      { property: "og:title", content: "LiveScore Demo" },
+      { property: "og:description", content: "Placar ao vivo de futebol." },
     ],
   }),
-  component: Index,
+  component: HomePage,
 });
 
-function Index() {
+function HomePage() {
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+
   return (
-    <main className="hello-page">
-      <div className="hello-content">
-        <div className="hello-symbol" aria-hidden="true"><Globe2 size={32} strokeWidth={1.5} /></div>
-        <h1>Olá, mundo<span>!</span></h1>
-        <p>Um pequeno começo.<br />Um mundo de possibilidades.</p>
-      </div>
-      <footer className="hello-footer">FEITO COM SIMPLICIDADE</footer>
-    </main>
+    <LivescoreApp
+      search={search}
+      fixtureId={null}
+      onSearch={(next) => {
+        void navigate({ to: "/", search: next, replace: true });
+      }}
+      onBrowse={(next) => {
+        void navigate({ to: "/", search: next });
+      }}
+      onOpen={(fixtureId) => {
+        void navigate({ to: "/jogo/$fixtureId", params: { fixtureId }, search });
+      }}
+      onClose={() => {
+        void navigate({ to: "/", search });
+      }}
+    />
   );
 }

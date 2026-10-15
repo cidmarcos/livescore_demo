@@ -10,33 +10,43 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as JogoFixtureIdRouteImport } from './routes/jogo/$fixtureId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JogoFixtureIdRoute = JogoFixtureIdRouteImport.update({
+  id: '/jogo/$fixtureId',
+  path: '/jogo/$fixtureId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/jogo/$fixtureId': typeof JogoFixtureIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/jogo/$fixtureId': typeof JogoFixtureIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/jogo/$fixtureId': typeof JogoFixtureIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/jogo/$fixtureId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/jogo/$fixtureId'
+  id: '__root__' | '/' | '/jogo/$fixtureId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  JogoFixtureIdRoute: typeof JogoFixtureIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/jogo/$fixtureId': {
+      id: '/jogo/$fixtureId'
+      path: '/jogo/$fixtureId'
+      fullPath: '/jogo/$fixtureId'
+      preLoaderRoute: typeof JogoFixtureIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  JogoFixtureIdRoute: JogoFixtureIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

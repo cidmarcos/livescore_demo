@@ -1,0 +1,4 @@
+project_id = "frwzyqaciughjqcsxark"
+
+[functions.livescore-proxy]
+verify_jwt = false
