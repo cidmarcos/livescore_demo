@@ -80,7 +80,14 @@ async function listAction(apiKey: string, url: URL) {
 async function detailAction(apiKey: string, url: URL) {
   const fixtureId = readId(url.searchParams.get("fixture_id"), "fixture_id");
   const phase = await resolvePhase(apiKey, fixtureId, url.searchParams.get("phase"));
-  return cached(`detail:${phase}:${fixtureId}`, TTL.detail, async () => {
+  const cacheKey =
+    phase === "upcoming"
+      ? `detail:upcoming:v2:${fixtureId}`
+      : phase === "live"
+        ? `detail:live:v2:${fixtureId}`
+        : `detail:${phase}:${fixtureId}`;
+  const ttl = phase === "upcoming" ? TTL.upcoming : TTL.detail;
+  return cached(cacheKey, ttl, async () => {
     if (phase === "live") {
       const data = await oneObject(apiKey, `/matches-live-detail?fixture_id=${fixtureId}`);
       return {
@@ -88,6 +95,7 @@ async function detailAction(apiKey: string, url: URL) {
         match: normalizeLive(data),
         stats: statsFromLive(data.stats),
         odds: readOdds(data),
+        live: readLive(data),
       };
     }
     if (phase === "ended") {
@@ -99,12 +107,16 @@ async function detailAction(apiKey: string, url: URL) {
         odds: readOdds(data),
       };
     }
-    const data = await oneObject(apiKey, `/matches-upcoming-detail?fixture_id=${fixtureId}`);
+    const data = await oneObject(
+      apiKey,
+      `/matches-upcoming-detail?fixture_id=${fixtureId}&fields=stats_extra,match_leg`,
+    );
     return {
       phase,
       match: normalizeUpcoming(data),
       stats: [],
       odds: readOdds(data),
+      preview: readPreview(data),
     };
   });
 }
@@ -422,6 +434,341 @@ function statsFromEnded(stats: { ft?: Record<string, { home?: unknown; away?: un
     if (home == null || away == null) return [];
     return [{ key, label, home, away }];
   });
+}
+
+const TEAM_STATS: [string, string][] = [
+  ["ppj", "Pontos por jogo"],
+  ["win_pct", "Vitórias"],
+  ["avg_goals_scored", "Gols marcados"],
+  ["avg_goals_conceded", "Gols sofridos"],
+  ["xg", "xG"],
+  ["btts_pct", "Ambas marcam"],
+  ["over_25_pct", "Over 2.5"],
+  ["corners_ft_avg", "Escanteios"],
+  ["clean_sheet_pct", "Sem sofrer gols"],
+];
+
+const BOOK_NAMES: Record<string, string> = {
+  bet365: "Bet365",
+  betfair: "Betfair",
+  pinnacle: "Pinnacle",
+  betano: "Betano",
+  superbet: "Superbet",
+  betbra: "BetBra",
+};
+
+function readPreview(row: Record<string, any>) {
+  const homeName = String(row.home_name ?? row.home_team_name ?? "");
+  const awayName = String(row.away_name ?? row.away_team_name ?? "");
+  return {
+    competition: readCompetition(row.competition),
+    standings: readStandings(row.standings),
+    probability: readProbability(row.probability),
+    books: readBooks(row.odds),
+    teamStats: pairStats(row.stats?.home, row.stats?.away, TEAM_STATS),
+    extraStats: pairExtra(row.stats_extra?.home, row.stats_extra?.away),
+    correctScores: readCorrectScores(row.correct_scores),
+    matchLeg: readMatchLeg(row.match_leg),
+    firstLeg: readFirstLeg(row.first_leg_score),
+    otherNames: {
+      home: alternateName(row.other_names?.home, homeName),
+      away: alternateName(row.other_names?.away, awayName),
+    },
+  };
+}
+
+function readCompetition(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return null;
+  const competition = {
+    type: textOrNull(raw.type),
+    seasonProgress: numberOrNull(raw.season_progress),
+    isFriendly: boolOrNull(raw.is_friendly),
+    isCup: boolOrNull(raw.is_cup),
+    predictability: textOrNull(raw.predictability),
+  };
+  const empty =
+    !competition.type &&
+    competition.seasonProgress == null &&
+    competition.isFriendly == null &&
+    competition.isCup == null &&
+    !competition.predictability;
+  return empty ? null : competition;
+}
+
+function readStandings(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return null;
+  const standings = {
+    homePosition: numberOrNull(raw.home_position),
+    awayPosition: numberOrNull(raw.away_position),
+    homePlayed: numberOrNull(raw.home_played),
+    awayPlayed: numberOrNull(raw.away_played),
+  };
+  if (standings.homePosition == null && standings.awayPosition == null) return null;
+  return standings;
+}
+
+function readProbability(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return null;
+  const home = numberOrNull(raw.home_win ?? raw.home);
+  const draw = numberOrNull(raw.draw);
+  const away = numberOrNull(raw.away_win ?? raw.away);
+  if (home == null || draw == null || away == null) return null;
+  return {
+    home,
+    draw,
+    away,
+    btts: numberOrNull(raw.btts ?? raw.btts_yes),
+    over25: numberOrNull(raw.o25 ?? raw.over25 ?? raw.over_25),
+    under25: numberOrNull(raw.u25 ?? raw.under25 ?? raw.under_25),
+  };
+}
+
+const MARKET_KEYS = new Set(["ft_result", "ht_result", "btts", "over_under", "correct_score", "correct_scores"]);
+
+function readBooks(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return [];
+  const books = [];
+  for (const [key, value] of Object.entries(raw)) {
+    if (MARKET_KEYS.has(key)) continue;
+    const price = priceTriple(value) ?? priceTriple(value?.ft_result);
+    if (!price) continue;
+    books.push({ name: BOOK_NAMES[key] ?? labelFromKey(key), ...price });
+  }
+  return books;
+}
+
+function priceTriple(value: any) {
+  const home = numberOrNull(value?.home);
+  const draw = numberOrNull(value?.draw);
+  const away = numberOrNull(value?.away);
+  if (home == null || draw == null || away == null) return null;
+  return { home, draw, away };
+}
+
+function pairStats(
+  home: Record<string, any> | null,
+  away: Record<string, any> | null,
+  fields: [string, string][],
+) {
+  if (!home || !away) return [];
+  return fields.flatMap(([key, label]) => {
+    const homeValue = numberOrNull(home[key]);
+    const awayValue = numberOrNull(away[key]);
+    if (homeValue == null || awayValue == null) return [];
+    return [{ key, label, home: homeValue, away: awayValue }];
+  });
+}
+
+function pairExtra(home: Record<string, any> | null, away: Record<string, any> | null) {
+  if (!home || !away) return [];
+  const skip = new Set(["team_id", "id"]);
+  return Object.keys(home)
+    .filter((key) => !skip.has(key) && numberOrNull(home[key]) != null && numberOrNull(away[key]) != null)
+    .slice(0, 8)
+    .map((key) => ({
+      key,
+      label: labelFromKey(key),
+      home: numberOrNull(home[key]) ?? 0,
+      away: numberOrNull(away[key]) ?? 0,
+    }));
+}
+
+function readCorrectScores(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const rows = Object.entries(raw)
+    .filter(([key]) => /^\d+-\d+$/.test(key))
+    .flatMap(([score, value]) => {
+      const probability = numberOrNull(value);
+      return probability != null && probability > 0 ? [{ score, probability }] : [];
+    })
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, 6);
+  const fractional = rows.length > 0 && rows.every((row) => row.probability <= 1);
+  return fractional ? rows.map((row) => ({ ...row, probability: row.probability * 100 })) : rows;
+}
+
+function readMatchLeg(value: unknown) {
+  if (value === "single" || value === "first" || value === "second") return value;
+  return null;
+}
+
+function readFirstLeg(raw: Record<string, any> | null) {
+  const home = numberOrNull(raw?.home);
+  const away = numberOrNull(raw?.away);
+  if (home == null || away == null) return null;
+  return { home, away };
+}
+
+function alternateName(value: unknown, main: string) {
+  const name = textOrNull(value);
+  if (!name || name.trim().toLowerCase() === main.trim().toLowerCase()) return null;
+  return name;
+}
+
+function labelFromKey(key: string) {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function boolOrNull(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1" || value === "true") return true;
+  if (value === 0 || value === "0" || value === "false") return false;
+  return null;
+}
+
+const PRESSURE_METRICS: [string, string][] = [
+  ["pi1", "PI1"],
+  ["pi2", "PI2"],
+  ["pi3", "PI3"],
+  ["appm", "APPM"],
+  ["appm10", "APPM 10"],
+  ["cg", "CG"],
+  ["cg10", "CG 10"],
+  ["h2h", "H2H"],
+];
+
+const WINDOW_STATS: [string, string][] = [
+  ["attacks", "Ataques"],
+  ["dangerous_attacks", "Ataques perigosos"],
+  ["on_target", "Chutes no gol"],
+  ["off_target", "Chutes para fora"],
+  ["corners", "Escanteios"],
+  ["total_shots", "Finalizações"],
+];
+
+const WINDOW_FIELDS: [string, 5 | 10 | 15 | 20][] = [
+  ["last5min_stats", 5],
+  ["last10min_stats", 10],
+  ["last15min_stats", 15],
+  ["last20min_stats", 20],
+];
+
+function readLive(row: Record<string, any>) {
+  const books = readBooks(row.odds);
+  const betfair = betfairBack(row);
+  if (betfair && !books.some((book) => book.name === "Betfair")) books.unshift(betfair);
+  return {
+    pressure: readPressure(row.pressure_indices),
+    windows: WINDOW_FIELDS.flatMap(([field, minutes]) => {
+      const stats = pairStats(windowSide(row[field]?.home), windowSide(row[field]?.away), WINDOW_STATS);
+      return stats.length > 0 ? [{ minutes, stats }] : [];
+    }),
+    opta: readOpta(row.opta_data),
+    books,
+  };
+}
+
+function windowSide(side: Record<string, any> | null) {
+  if (!side || typeof side !== "object") return null;
+  return {
+    attacks: side.attacks,
+    dangerous_attacks: side.dangerous_attacks ?? side.dangerousAttacks,
+    on_target: side.on_target ?? side.onTarget,
+    off_target: side.off_target ?? side.offTarget,
+    corners: side.corners,
+    total_shots: side.total_shots ?? side.totalShots ?? side.shots,
+  };
+}
+
+function readPressure(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return [];
+  const direct = pairStats(raw.home, raw.away, PRESSURE_METRICS);
+  if (direct.length > 0) return direct;
+  for (const key of ["last_5min", "last_10min", "last_15min", "last_20min"]) {
+    const window = raw[key];
+    const stats = pairStats(window?.home, window?.away, PRESSURE_METRICS);
+    if (stats.length > 0) return stats;
+  }
+  return [];
+}
+
+function betfairBack(row: Record<string, any>) {
+  const direct = priceTriple(row.bf_odds?.ft_result);
+  if (direct) return { name: "Betfair", ...direct };
+  const markets = Array.isArray(row.bf_odds?.markets) ? row.bf_odds.markets : [];
+  const market = markets.find((item: { type?: string }) => /match_odds/i.test(String(item?.type ?? "")));
+  const runners = Array.isArray(market?.runners) ? market.runners : [];
+  const price = (name: string) => {
+    const runner = runners.find((item: { name?: string }) => String(item?.name ?? "").toLowerCase() === name);
+    const back = runner?.odds?.back?.[0]?.price ?? runner?.odds?.back;
+    return numberOrNull(Array.isArray(back) ? back[0]?.price : back);
+  };
+  const home = price(String(row.home_name ?? "").toLowerCase()) ?? price("home");
+  const draw = price("the draw") ?? price("draw");
+  const away = price(String(row.away_name ?? "").toLowerCase()) ?? price("away");
+  if (home == null || draw == null || away == null) return null;
+  return { name: "Betfair", home, draw, away };
+}
+
+function readOpta(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return [];
+  if (Array.isArray(raw.statistics)) return optaFromStatistics(raw.statistics);
+  if (Array.isArray(raw.DATA)) return optaFromLegacy(raw.DATA);
+  return [];
+}
+
+function optaFromStatistics(periods: Record<string, any>[]) {
+  const period =
+    periods.find((item) => /^(all|ft|full|jogo)$/i.test(String(item?.period ?? ""))) ?? periods[0];
+  const groups = Array.isArray(period?.groups) ? period.groups : [];
+  return groups
+    .slice(0, 8)
+    .flatMap((group: Record<string, any>) => {
+      const items = Array.isArray(group.statisticsItems) ? group.statisticsItems : [];
+      const rows = items.slice(0, 12).flatMap((item: Record<string, any>) => optaRow(item.name ?? item.key, item.home, item.away));
+      return rows.length > 0 ? [{ title: optaTitle(group.groupName), rows }] : [];
+    });
+}
+
+function optaFromLegacy(stages: Record<string, any>[]) {
+  const stage =
+    stages.find((item) => /jogo|all|full|ft/i.test(String(item?.STAGE_NAME ?? ""))) ?? stages[0];
+  const groups = Array.isArray(stage?.GROUPS) ? stage.GROUPS : [];
+  return groups
+    .slice(0, 8)
+    .flatMap((group: Record<string, any>) => {
+      const items = Array.isArray(group.ITEMS) ? group.ITEMS : [];
+      const rows = items
+        .slice(0, 12)
+        .flatMap((item: Record<string, any>) => optaRow(item.INCIDENT_NAME, item.VALUE_HOME, item.VALUE_AWAY));
+      return rows.length > 0 ? [{ title: optaTitle(group.GROUP_LABEL), rows }] : [];
+    });
+}
+
+function optaRow(label: unknown, home: unknown, away: unknown) {
+  const title = textOrNull(label);
+  const homeText = textOrNull(home);
+  const awayText = textOrNull(away);
+  if (!title || homeText == null || awayText == null) return [];
+  return [{ label: title, home: homeText, away: awayText, homeValue: numberFromText(home), awayValue: numberFromText(away) }];
+}
+
+function numberFromText(value: unknown) {
+  const direct = numberOrNull(value);
+  if (direct != null) return direct;
+  const text = textOrNull(value);
+  if (!text) return null;
+  const match = text.replace("%", "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optaTitle(value: unknown) {
+  const labels: Record<string, string> = {
+    "match overview": "Destaque",
+    shots: "Finalizações",
+    attack: "Ataque",
+    passes: "Passes",
+    duels: "Duelos",
+    defending: "Defesa",
+    goalkeeping: "Goleiro",
+    discipline: "Disciplina",
+  };
+  const text = textOrNull(value) ?? "Opta";
+  return labels[text.toLowerCase()] ?? text;
 }
 
 function readOdds(row: Record<string, any>) {

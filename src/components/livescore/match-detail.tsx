@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -18,6 +18,9 @@ import { toast } from "sonner";
 
 import { Crest } from "@/components/livescore/crest";
 import { Flag as CountryFlag } from "@/components/livescore/flag";
+import { LiveOpta, OddsPanel, PressurePanel, ProbabilityPanel } from "@/components/livescore/live-extra";
+import { StatBars } from "@/components/livescore/stat-bars";
+import { legText, UpcomingPanels, UpcomingStats } from "@/components/livescore/upcoming-preview";
 import { formationRows, lastName } from "@/components/livescore/formation";
 import { MomentumChart } from "@/components/livescore/momentum-chart";
 import {
@@ -37,10 +40,10 @@ import {
   teamSide,
   type EventKind,
 } from "@/lib/livescore/parse";
-import type { LineupPlayer, LineupSide, MatchCard, Phase, StandingGroup, StatLine } from "@/lib/livescore/types";
+import type { LineupPlayer, LineupSide, MatchCard, Phase, StandingGroup } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
 
-const tabs = [
+const baseTabs = [
   ["detalhes", "Detalhes"],
   ["estatisticas", "Estatísticas"],
   ["comentario", "Lances"],
@@ -48,7 +51,7 @@ const tabs = [
   ["classificacao", "Classificação"],
 ] as const;
 
-type TabId = (typeof tabs)[number][0];
+type TabId = (typeof baseTabs)[number][0] | "pressao" | "opta" | "probabilidade" | "odds";
 
 export function MatchDetail({
   fixtureId,
@@ -106,6 +109,22 @@ export function MatchDetail({
     match?.awayName ?? "",
   );
 
+  const odds = detail.data?.odds ?? null;
+  const liveExtra = isLive ? (detail.data?.live ?? null) : null;
+  const hasPressure = Boolean(liveExtra && (liveExtra.pressure.length > 0 || liveExtra.windows.length > 0));
+  const hasOpta = Boolean(liveExtra && liveExtra.opta.length > 0);
+  const hasOdds = Boolean(odds || (liveExtra && liveExtra.books.length > 0));
+  const tabs: [TabId, string][] = [["detalhes", "Detalhes"]];
+  if (hasPressure) tabs.push(["pressao", "Pressão"]);
+  if (hasOpta) tabs.push(["opta", "Opta"]);
+  if (odds) tabs.push(["probabilidade", "Probabilidade"]);
+  if (hasOdds) tabs.push(["odds", "Odds"]);
+  for (const [id, label] of baseTabs.slice(1)) tabs.push([id, label]);
+  const tabKey = tabs.map(([id]) => id).join("|");
+  useEffect(() => {
+    if (!tabKey.split("|").includes(tab)) setTab("detalhes");
+  }, [tab, tabKey]);
+
   if (!match && detail.isPending) {
     return (
       <div className="space-y-4">
@@ -124,7 +143,9 @@ export function MatchDetail({
   }
 
   const kickoff = formatKickoff(match.kickoff);
-  const odds = detail.data?.odds ?? null;
+  const preview = detail.data?.preview ?? null;
+  const upcoming = match.phase === "upcoming";
+  const knockout = legText(preview?.matchLeg ?? null);
   const showHt =
     match.score?.htHome != null && match.score?.htAway != null && match.status !== "HT_1ST";
 
@@ -173,9 +194,21 @@ export function MatchDetail({
           </div>
 
           <div className="mt-6 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-3 md:gap-6">
-            <TeamBlock name={match.homeName} imageId={match.homeImageId} goals={goalList.home} />
+            <TeamBlock
+              name={match.homeName}
+              imageId={match.homeImageId}
+              goals={goalList.home}
+              alias={preview?.otherNames.home ?? null}
+            />
             <div className="flex flex-col items-center pt-2">
-              <StatusPill match={match} />
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                <StatusPill match={match} />
+                {knockout ? (
+                  <span className="rounded-full border border-primary/30 bg-primary/15 px-3 py-1 text-[11px] font-bold text-primary">
+                    {knockout}
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-3 flex items-center gap-2 text-4xl font-extrabold tabular-nums tracking-tight md:text-5xl">
                 <span>{match.score?.home ?? "–"}</span>
                 <span className="text-2xl text-muted-foreground/60">-</span>
@@ -186,8 +219,18 @@ export function MatchDetail({
                   HT {match.score?.htHome}-{match.score?.htAway}
                 </p>
               ) : null}
+              {preview?.matchLeg === "second" && preview.firstLeg ? (
+                <p className="mt-1.5 text-[11px] font-medium text-muted-foreground">
+                  Ida {preview.firstLeg.home}-{preview.firstLeg.away}
+                </p>
+              ) : null}
             </div>
-            <TeamBlock name={match.awayName} imageId={match.awayImageId} goals={goalList.away} />
+            <TeamBlock
+              name={match.awayName}
+              imageId={match.awayImageId}
+              goals={goalList.away}
+              alias={preview?.otherNames.away ?? null}
+            />
           </div>
 
           {odds || radarUrl ? (
@@ -237,24 +280,34 @@ export function MatchDetail({
 
       <div key={tab} className="ls-enter">
         {tab === "detalhes" ? (
-          <div className="space-y-4">
-            <MomentumChart points={momentum} match={match} />
-            {(detail.data?.stats ?? []).length > 0 ? (
-              <Panel title="Resumo">
-                <StatBars stats={(detail.data?.stats ?? []).slice(0, 4)} />
-              </Panel>
-            ) : null}
-            {eventList.length > 0 ? (
-              <Panel title="Últimos lances">
-                <Timeline events={eventList.slice(-5)} home={match.homeName} away={match.awayName} />
-              </Panel>
-            ) : null}
-          </div>
+          upcoming ? (
+            preview ? <UpcomingPanels preview={preview} /> : null
+          ) : (
+            <div className="space-y-4">
+              <MomentumChart points={momentum} match={match} />
+              {(detail.data?.stats ?? []).length > 0 ? (
+                <Panel title="Resumo">
+                  <StatBars stats={(detail.data?.stats ?? []).slice(0, 4)} />
+                </Panel>
+              ) : null}
+              {eventList.length > 0 ? (
+                <Panel title="Últimos lances">
+                  <Timeline events={eventList.slice(-5)} home={match.homeName} away={match.awayName} />
+                </Panel>
+              ) : null}
+            </div>
+          )
         ) : null}
+        {tab === "pressao" && liveExtra ? <PressurePanel live={liveExtra} /> : null}
+        {tab === "opta" && liveExtra ? <LiveOpta live={liveExtra} /> : null}
+        {tab === "probabilidade" && odds ? <ProbabilityPanel odds={odds} /> : null}
+        {tab === "odds" ? <OddsPanel odds={odds} books={liveExtra?.books ?? []} /> : null}
         {tab === "estatisticas" ? (
-          <Panel title="Estatísticas da partida">
+          <Panel title={upcoming ? "Médias antes do jogo" : "Estatísticas da partida"}>
             {detail.isPending && !detail.data ? (
               <PanelSkeleton />
+            ) : upcoming && preview ? (
+              <UpcomingStats preview={preview} />
             ) : (detail.data?.stats ?? []).length === 0 ? (
               <Muted>Estatísticas ainda não disponíveis.</Muted>
             ) : (
@@ -336,13 +389,24 @@ function StatusPill({ match }: { match: MatchCard }) {
   );
 }
 
-function TeamBlock({ name, imageId, goals }: { name: string; imageId: string | null; goals: string[] }) {
+function TeamBlock({
+  name,
+  imageId,
+  goals,
+  alias,
+}: {
+  name: string;
+  imageId: string | null;
+  goals: string[];
+  alias?: string | null;
+}) {
   return (
     <div className="flex min-w-0 flex-col items-center text-center">
       <span className="grid size-16 place-items-center rounded-2xl border border-border bg-surface-2/70 md:size-20">
         <Crest imageId={imageId} name={name} className="size-11 md:size-14" />
       </span>
       <p className="mt-3 line-clamp-2 text-sm font-bold md:text-base">{name}</p>
+      {alias ? <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{alias}</p> : null}
       {goals.length > 0 ? (
         <p className="mt-1 flex flex-wrap justify-center gap-x-1.5 text-[11px] text-muted-foreground">
           {goals.map((minute, index) => (
@@ -395,55 +459,6 @@ function PanelSkeleton() {
       {Array.from({ length: 5 }, (_, index) => (
         <div key={index} className="h-6 animate-pulse rounded-lg bg-surface-2" />
       ))}
-    </div>
-  );
-}
-
-function StatBars({ stats }: { stats: StatLine[] }) {
-  return (
-    <div className="space-y-4">
-      {stats.map((stat) => {
-        const max = Math.max(Math.abs(stat.home), Math.abs(stat.away)) || 1;
-        const homeWins = stat.home > stat.away;
-        const awayWins = stat.away > stat.home;
-        return (
-          <div key={stat.key}>
-            <div className="mb-1.5 flex items-center justify-between text-sm">
-              <span
-                className={cn(
-                  "min-w-10 rounded-md px-1.5 text-left font-bold tabular-nums",
-                  homeWins ? "bg-home/15 text-home" : "text-muted-foreground",
-                )}
-              >
-                {formatStat(stat.home, stat.key)}
-              </span>
-              <span className="text-xs font-medium text-muted-foreground">{stat.label}</span>
-              <span
-                className={cn(
-                  "min-w-10 rounded-md px-1.5 text-right font-bold tabular-nums",
-                  awayWins ? "bg-away/15 text-away" : "text-muted-foreground",
-                )}
-              >
-                {formatStat(stat.away, stat.key)}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="flex h-2 justify-end overflow-hidden rounded-full bg-surface-2">
-                <span
-                  className={cn("rounded-full transition-[width] duration-500", homeWins ? "bg-home" : "bg-home/45")}
-                  style={{ width: `${(Math.abs(stat.home) / max) * 100}%` }}
-                />
-              </div>
-              <div className="flex h-2 overflow-hidden rounded-full bg-surface-2">
-                <span
-                  className={cn("rounded-full transition-[width] duration-500", awayWins ? "bg-away" : "bg-away/45")}
-                  style={{ width: `${(Math.abs(stat.away) / max) * 100}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -808,9 +823,4 @@ function messageFrom(error: unknown, fallback: string) {
   if (error instanceof LivescoreError) return error.message;
   if (error instanceof Error && error.message) return error.message;
   return fallback;
-}
-
-function formatStat(value: number, key: string) {
-  if (key.startsWith("possession")) return `${value}%`;
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }

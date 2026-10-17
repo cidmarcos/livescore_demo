@@ -32,11 +32,81 @@ export type StatLine = {
   away: number;
 };
 
+export type BookPrice = {
+  name: string;
+  home: number;
+  draw: number;
+  away: number;
+};
+
+export type ScoreChance = {
+  score: string;
+  probability: number;
+};
+
+export type UpcomingPreview = {
+  competition: {
+    type: string | null;
+    seasonProgress: number | null;
+    isFriendly: boolean | null;
+    isCup: boolean | null;
+    predictability: string | null;
+  } | null;
+  standings: {
+    homePosition: number | null;
+    awayPosition: number | null;
+    homePlayed: number | null;
+    awayPlayed: number | null;
+  } | null;
+  probability: {
+    home: number;
+    draw: number;
+    away: number;
+    btts: number | null;
+    over25: number | null;
+    under25: number | null;
+  } | null;
+  books: BookPrice[];
+  teamStats: StatLine[];
+  extraStats: StatLine[];
+  correctScores: ScoreChance[];
+  matchLeg: "single" | "first" | "second" | null;
+  firstLeg: { home: number; away: number } | null;
+  otherNames: { home: string | null; away: string | null };
+};
+
+export type LiveWindow = {
+  minutes: 5 | 10 | 15 | 20;
+  stats: StatLine[];
+};
+
+export type OptaRow = {
+  label: string;
+  home: string;
+  away: string;
+  homeValue: number | null;
+  awayValue: number | null;
+};
+
+export type OptaGroup = {
+  title: string;
+  rows: OptaRow[];
+};
+
+export type LiveExtra = {
+  pressure: StatLine[];
+  windows: LiveWindow[];
+  opta: OptaGroup[];
+  books: BookPrice[];
+};
+
 export type DetailPayload = {
   phase: Phase;
   match: MatchCard;
   stats: StatLine[];
   odds: { home: number; draw: number; away: number } | null;
+  preview?: UpcomingPreview;
+  live?: LiveExtra;
 };
 
 export type TrendPoint = {
