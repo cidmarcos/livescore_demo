@@ -1,6 +1,7 @@
 import { ChevronRight } from "lucide-react";
 
 import { Crest } from "@/components/livescore/crest";
+import { Flag } from "@/components/livescore/flag";
 import { minuteLabel } from "@/lib/livescore/parse";
 import type { MatchCard } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
@@ -52,7 +53,10 @@ export function LiveStrip({
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-medium text-muted-foreground">{match.leagueName}</span>
+              <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <Flag code={match.country} className="h-3 w-4" />
+                <span className="truncate">{match.leagueName}</span>
+              </span>
               <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-live/15 px-2 py-0.5 text-[11px] font-bold text-live">
                 <span className="ls-live-dot !size-1.5" />
                 {minuteLabel(match)}

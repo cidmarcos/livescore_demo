@@ -50,7 +50,7 @@ export async function fetchRadars() {
 }
 
 export function logoUrl(imageId: string) {
-  return `https://csv.futodds.com/functions/v1/team-logo-proxy/${imageId}.png`;
+  return `https://csv.futodds.com/functions/v1/team-logo-proxy/${imageId}.png?size=m`;
 }
 
 async function call<T>(params: Record<string, string>): Promise<T> {

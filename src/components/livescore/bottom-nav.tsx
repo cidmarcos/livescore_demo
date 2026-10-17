@@ -1,16 +1,20 @@
-import { activeNav, navItems, type NavId } from "@/components/livescore/nav";
-import { navIcons } from "@/components/livescore/top-bar";
+import { JogosMenu } from "@/components/livescore/jogos-menu";
+import { activeNav, navIcons, navItems, type JogosItem, type NavId } from "@/components/livescore/nav";
 import type { LivescoreSearch } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
 
 export function BottomNav({
   search,
   liveCount,
+  jogosCounts,
   onNav,
+  onJogos,
 }: {
   search: LivescoreSearch;
   liveCount: number;
+  jogosCounts: Record<JogosItem, number | null>;
   onNav: (id: NavId) => void;
+  onJogos: (id: JogosItem) => void;
 }) {
   const active = activeNav(search);
 
@@ -19,8 +23,20 @@ export function BottomNav({
       aria-label="Navegação"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
     >
-      <div className="mx-auto grid max-w-lg grid-cols-4">
+      <div className="mx-auto grid max-w-lg grid-cols-3">
         {navItems.map((item) => {
+          if (item.id === "jogos") {
+            return (
+              <JogosMenu
+                key={item.id}
+                search={search}
+                counts={jogosCounts}
+                active={active === "jogos"}
+                variant="bottom"
+                onSelect={onJogos}
+              />
+            );
+          }
           const Icon = navIcons[item.id];
           const selected = active === item.id;
           return (

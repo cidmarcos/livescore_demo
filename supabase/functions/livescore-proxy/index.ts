@@ -4,14 +4,14 @@ const MAX_PAGES = 8;
 const MIN_GAP_MS = 220;
 
 const TTL = {
-  live: 15,
-  upcoming: 120,
+  live: 60,
+  upcoming: 10 * 60,
   ended: 300,
-  detail: 12,
-  events: 12,
-  lineups: 120,
+  detail: 60,
+  events: 60,
+  lineups: 10 * 60,
   table: 6 * 60 * 60,
-  radar: 30,
+  radar: 60,
 } as const;
 
 const cors = {

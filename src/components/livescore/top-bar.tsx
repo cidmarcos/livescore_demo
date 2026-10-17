@@ -1,29 +1,27 @@
-import { Activity, Bell, CalendarDays, Radio, Search, Star, Trophy } from "lucide-react";
+import { Activity, Bell, Search } from "lucide-react";
 import { toast } from "sonner";
 
-import { activeNav, navItems, type NavId } from "@/components/livescore/nav";
+import { JogosMenu } from "@/components/livescore/jogos-menu";
+import { activeNav, navIcons, navItems, type JogosItem, type NavId } from "@/components/livescore/nav";
 import { UserMenu } from "@/components/livescore/user-menu";
 import type { LivescoreSearch } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
 
-export const navIcons: Record<NavId, typeof Radio> = {
-  live: Radio,
-  jogos: CalendarDays,
-  favoritos: Star,
-  competicoes: Trophy,
-};
-
 export function TopBar({
   search,
   liveCount,
+  jogosCounts,
   onQuery,
   onNav,
+  onJogos,
   onHome,
 }: {
   search: LivescoreSearch;
   liveCount: number;
+  jogosCounts: Record<JogosItem, number | null>;
   onQuery: (q: string) => void;
   onNav: (id: NavId) => void;
+  onJogos: (id: JogosItem) => void;
   onHome: () => void;
 }) {
   const active = activeNav(search);
@@ -45,6 +43,18 @@ export function TopBar({
 
         <nav className="ml-4 hidden items-center gap-1 lg:flex" aria-label="Navegação principal">
           {navItems.map((item) => {
+            if (item.id === "jogos") {
+              return (
+                <JogosMenu
+                  key={item.id}
+                  search={search}
+                  counts={jogosCounts}
+                  active={active === "jogos"}
+                  variant="bar"
+                  onSelect={onJogos}
+                />
+              );
+            }
             const Icon = navIcons[item.id];
             const selected = active === item.id;
             return (

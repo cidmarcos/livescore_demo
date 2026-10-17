@@ -1,6 +1,7 @@
 import { CalendarDays, ChevronLeft, ChevronRight, Search, Star, Trophy, WifiOff } from "lucide-react";
 
 import { Crest } from "@/components/livescore/crest";
+import { Flag } from "@/components/livescore/flag";
 import { formatDayLabel, minuteLabel, shiftDate, todaySaoPaulo } from "@/lib/livescore/parse";
 import type { LivescoreSearch, MatchCard, Phase } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
@@ -106,6 +107,7 @@ export function MatchList({
                 className="ls-pill max-w-44 shrink-0"
                 onClick={() => onSearch({ ...search, liga: competition.id })}
               >
+                <Flag code={competition.country} className="h-3 w-4" />
                 <span className="truncate">{competition.name}</span>
                 <span className="opacity-70">{competition.count}</span>
               </button>
@@ -142,7 +144,7 @@ export function MatchList({
           ? groups.map((group) => (
               <div key={group.key} className="ls-enter pb-1">
                 <div className="sticky top-[116px] z-10 flex items-center gap-2.5 bg-card/95 px-3 py-2.5 backdrop-blur md:top-0">
-                  <LeagueBadge name={group.name} />
+                  <LeagueBadge name={group.name} country={group.country} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-bold uppercase tracking-wide">{group.name}</p>
                     {group.country ? (
@@ -173,11 +175,17 @@ export function MatchList({
   );
 }
 
-function LeagueBadge({ name }: { name: string }) {
+function LeagueBadge({ name, country }: { name: string; country: string | null }) {
   return (
-    <span className="ls-brand grid size-7 shrink-0 place-items-center rounded-lg text-[11px] font-bold text-white">
-      {name.trim()[0]?.toUpperCase() ?? "?"}
-    </span>
+    <Flag
+      code={country}
+      className="h-5 w-7"
+      fallback={
+        <span className="ls-brand grid size-7 shrink-0 place-items-center rounded-lg text-[11px] font-bold text-white">
+          {name.trim()[0]?.toUpperCase() ?? "?"}
+        </span>
+      }
+    />
   );
 }
 
@@ -200,7 +208,7 @@ function CompetitionList({
             onClick={() => onSelect(competition.id)}
             className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-2"
           >
-            <LeagueBadge name={competition.name} />
+            <LeagueBadge name={competition.name} country={competition.country} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{competition.name}</span>
               {competition.country ? (

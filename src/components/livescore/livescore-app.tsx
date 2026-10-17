@@ -5,14 +5,13 @@ import { BottomNav } from "@/components/livescore/bottom-nav";
 import { LiveStrip } from "@/components/livescore/live-strip";
 import { MatchDetail } from "@/components/livescore/match-detail";
 import { MatchList } from "@/components/livescore/match-list";
-import { navSearch, type NavId } from "@/components/livescore/nav";
-import { StatTiles } from "@/components/livescore/stat-tiles";
+import { jogosSearch, navSearch, type JogosItem, type NavId } from "@/components/livescore/nav";
 import { TopBar } from "@/components/livescore/top-bar";
 import { Toaster } from "@/components/ui/sonner";
 import { fetchList, LivescoreError } from "@/lib/livescore/api";
 import { useFavorites } from "@/lib/livescore/favorites";
 import { todaySaoPaulo } from "@/lib/livescore/parse";
-import type { LivescoreSearch, Phase } from "@/lib/livescore/types";
+import type { LivescoreSearch } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
 
 export function LivescoreApp({
@@ -35,7 +34,7 @@ export function LivescoreApp({
   const live = useQuery({
     queryKey: ["livescore", "list", today, "live"],
     queryFn: () => fetchList(today, "live"),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
   });
   const ended = useQuery({
     queryKey: ["livescore", "list", search.data, "ended"],
@@ -45,7 +44,7 @@ export function LivescoreApp({
   const upcoming = useQuery({
     queryKey: ["livescore", "list", search.data, "upcoming"],
     queryFn: () => fetchList(search.data, "upcoming"),
-    refetchInterval: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 
   const byPhase = { live, ended, upcoming };
@@ -61,27 +60,21 @@ export function LivescoreApp({
     onBrowse(navSearch(search, id));
   }
 
-  function selectTile(id: "favoritos" | Phase) {
-    if (id === "favoritos") {
-      onBrowse({ ...search, aba: "favoritos", liga: "" });
-      return;
-    }
-    onBrowse({
-      ...search,
-      aba: "todos",
-      filtro: id,
-      data: id === "live" ? today : search.data,
-      liga: "",
-    });
-  }
+  const jogosCounts: Record<JogosItem, number | null> = {
+    favoritos: favorites.ids.length,
+    ended: ended.data ? ended.data.matches.length : null,
+    upcoming: upcoming.data ? upcoming.data.matches.length : null,
+  };
 
   return (
     <div className="min-h-dvh pb-24 text-foreground lg:pb-8">
       <TopBar
         search={search}
         liveCount={liveMatches.length}
+        jogosCounts={jogosCounts}
         onQuery={(q) => onSearch({ ...search, q })}
         onNav={nav}
+        onJogos={(id) => onBrowse(jogosSearch(search, id))}
         onHome={() => onBrowse(navSearch(search, "live"))}
       />
 
@@ -92,16 +85,6 @@ export function LivescoreApp({
             selectedId={fixtureId}
             onOpen={onOpen}
             onSeeAll={() => nav("live")}
-          />
-          <StatTiles
-            search={search}
-            counts={{
-              favoritos: favorites.ids.length,
-              live: live.data ? liveMatches.length : null,
-              ended: ended.data ? ended.data.matches.length : null,
-              upcoming: upcoming.data ? upcoming.data.matches.length : null,
-            }}
-            onSelect={selectTile}
           />
         </div>
 
@@ -139,7 +122,13 @@ export function LivescoreApp({
         </div>
       </div>
 
-      <BottomNav search={search} liveCount={liveMatches.length} onNav={nav} />
+      <BottomNav
+        search={search}
+        liveCount={liveMatches.length}
+        jogosCounts={jogosCounts}
+        onNav={nav}
+        onJogos={(id) => onBrowse(jogosSearch(search, id))}
+      />
       <Toaster theme="dark" position="top-center" />
     </div>
   );

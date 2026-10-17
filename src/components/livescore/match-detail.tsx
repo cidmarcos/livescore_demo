@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 
 import { Crest } from "@/components/livescore/crest";
+import { Flag as CountryFlag } from "@/components/livescore/flag";
 import { formationRows, lastName } from "@/components/livescore/formation";
 import { MomentumChart } from "@/components/livescore/momentum-chart";
 import {
@@ -67,23 +68,24 @@ export function MatchDetail({
     queryKey: ["livescore", "detail", fixtureId, phase],
     queryFn: () => fetchDetail(fixtureId, phase),
     retry: retryLivescore,
-    refetchInterval: isLive ? 15_000 : false,
+    refetchInterval: isLive ? 60_000 : false,
   });
   const events = useQuery({
     queryKey: ["livescore", "events", fixtureId, phase],
     queryFn: () => fetchEvents(fixtureId, phase),
     retry: retryLivescore,
-    refetchInterval: isLive ? 15_000 : false,
+    refetchInterval: isLive ? 60_000 : false,
   });
   const radars = useQuery({
     queryKey: ["livescore", "radar"],
     queryFn: fetchRadars,
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
   const lineups = useQuery({
     queryKey: ["livescore", "lineups", fixtureId],
     queryFn: () => fetchLineups(fixtureId),
     enabled: tab === "formacoes",
+    staleTime: 10 * 60_000,
     retry: retryLivescore,
   });
   const match = detail.data?.match ?? known;
@@ -143,7 +145,7 @@ export function MatchDetail({
               </button>
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 truncate text-xs font-semibold text-primary">
-                  <Trophy className="size-3.5 shrink-0" />
+                  <CountryFlag code={match.country} fallback={<Trophy className="size-3.5 shrink-0" />} />
                   <span className="truncate">{match.leagueName}</span>
                 </p>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
