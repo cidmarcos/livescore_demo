@@ -66,10 +66,17 @@ async function call<T>(params: Record<string, string>): Promise<T> {
     headers.set("apikey", anonKey);
     headers.set("Authorization", `Bearer ${anonKey}`);
   }
-  const response = await fetch(url, { headers });
-  const body = (await response.json().catch(() => ({}))) as { error?: string };
-  if (!response.ok) {
-    throw new LivescoreError(response.status, body.error ?? "Não foi possível carregar os jogos.");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, { headers });
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    if (response.status === 429 && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      continue;
+    }
+    if (!response.ok) {
+      throw new LivescoreError(response.status, body.error ?? "Não foi possível carregar os jogos.");
+    }
+    return body as T;
   }
-  return body as T;
+  throw new LivescoreError(429, "Muitas requisições. Tente de novo em instantes.");
 }

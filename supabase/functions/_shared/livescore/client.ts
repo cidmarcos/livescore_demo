@@ -1,7 +1,8 @@
 const FUTODDS_BASE = "https://csv.futodds.com/functions/v1";
 const PAGE_LIMIT = 80;
 const MAX_PAGES = 8;
-const MIN_GAP_MS = 220;
+const MIN_GAP_MS = 260;
+const MAX_429_RETRIES = 4;
 
 let nextSlot = 0;
 let calls = 0;
@@ -74,19 +75,28 @@ export async function one(apiKey: string, path: string) {
 }
 
 async function upstream(apiKey: string, path: string) {
-  const now = Date.now();
-  const slot = Math.max(now, nextSlot);
-  nextSlot = slot + MIN_GAP_MS;
-  if (slot > now) await delay(slot - now);
-  calls += 1;
-  const response = await fetch(`${FUTODDS_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: "application/json",
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  return { status: response.status, body };
+  for (let attempt = 0; attempt <= MAX_429_RETRIES; attempt++) {
+    const now = Date.now();
+    const slot = Math.max(now, nextSlot);
+    nextSlot = slot + MIN_GAP_MS;
+    if (slot > now) await delay(slot - now);
+    calls += 1;
+    const response = await fetch(`${FUTODDS_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 429 && attempt < MAX_429_RETRIES) {
+      const backoff = 1100 * (attempt + 1);
+      nextSlot = Math.max(nextSlot, Date.now() + backoff);
+      await delay(backoff);
+      continue;
+    }
+    return { status: response.status, body };
+  }
+  return { status: 429, body: {} };
 }
 
 function delay(ms: number) {

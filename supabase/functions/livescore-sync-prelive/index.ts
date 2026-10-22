@@ -10,7 +10,7 @@ import { accept, budget, unauthorized, withRun } from "../_shared/livescore/run.
 
 const HORIZON_MS = 24 * 60 * 60 * 1000;
 const FRESH_MS = 25 * 60 * 1000;
-const WORKERS = 4;
+const WORKERS = 2;
 
 type Card = ReturnType<typeof normalizeUpcoming>;
 type Freshness = { fixture_id: string; upcoming_at: string | null; odds_at: string | null };
@@ -30,6 +30,7 @@ Deno.serve(async (request) => {
 
 async function syncPrelive(apiKey: string) {
   const over = budget(130_000);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   const removed = await rpc<number>("livescore_cleanup", {});
   const today = utcDate(0);
   const tomorrow = utcDate(1);

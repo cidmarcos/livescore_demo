@@ -39,12 +39,16 @@ export function LivescoreApp({
   const ended = useQuery({
     queryKey: ["livescore", "list", search.data, "ended"],
     queryFn: () => fetchList(search.data, "ended"),
-    refetchInterval: 60_000,
+    enabled: search.filtro === "ended",
+    staleTime: 5 * 60_000,
+    refetchInterval: search.filtro === "ended" ? 5 * 60_000 : false,
   });
   const upcoming = useQuery({
     queryKey: ["livescore", "list", search.data, "upcoming"],
     queryFn: () => fetchList(search.data, "upcoming"),
-    refetchInterval: 5 * 60_000,
+    enabled: search.filtro === "upcoming",
+    staleTime: 5 * 60_000,
+    refetchInterval: search.filtro === "upcoming" ? 5 * 60_000 : false,
   });
 
   const byPhase = { live, ended, upcoming };
