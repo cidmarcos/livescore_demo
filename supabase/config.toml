@@ -2,3 +2,9 @@ project_id = "frwzyqaciughjqcsxark"
 
 [functions.livescore-proxy]
 verify_jwt = false
+
+[functions.livescore-sync-live]
+verify_jwt = false
+
+[functions.livescore-sync-prelive]
+verify_jwt = false
