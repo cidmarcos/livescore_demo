@@ -4,6 +4,7 @@ import type {
   LineupsPayload,
   ListPayload,
   Phase,
+  BookmakerOddsPayload,
   RadarPayload,
   TablePayload,
 } from "./types";
@@ -43,6 +44,10 @@ export async function fetchLineups(fixtureId: string) {
 
 export async function fetchTable(leagueId: string) {
   return call<TablePayload>({ action: "table", league_id: leagueId });
+}
+
+export async function fetchBookmakerOdds(fixtureId: string) {
+  return call<BookmakerOddsPayload>({ action: "bookmaker_odds", fixture_id: fixtureId });
 }
 
 export async function fetchRadars() {

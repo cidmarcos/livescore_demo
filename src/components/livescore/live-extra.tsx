@@ -20,41 +20,41 @@ export function impliedProbability(odds: Price) {
 }
 
 export function PressurePanel({ live }: { live: LiveExtra }) {
+  if (live.pressure.length === 0) return null;
+  return (
+    <section className="ls-card p-4 md:p-5">
+      <h3 className="mb-4 text-sm font-bold">Pressão</h3>
+      <StatBars stats={live.pressure} />
+    </section>
+  );
+}
+
+export function MinuteWindows({ live }: { live: LiveExtra }) {
   const [minutes, setMinutes] = useState(live.windows[0]?.minutes ?? 5);
   const window = live.windows.find((item) => item.minutes === minutes) ?? live.windows[0];
-  if (live.pressure.length === 0 && !window) return null;
+  if (!window) return null;
   return (
-    <div className="space-y-4">
-      {live.pressure.length > 0 ? (
-        <section className="ls-card p-4 md:p-5">
-          <h3 className="mb-4 text-sm font-bold">Pressão</h3>
-          <StatBars stats={live.pressure} />
-        </section>
-      ) : null}
-      {window ? (
-        <section className="ls-card p-4 md:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-bold">Últimos minutos</h3>
-            <div className="flex rounded-full bg-surface-2 p-0.5">
-              {live.windows.map((item) => (
-                <button
-                  key={item.minutes}
-                  type="button"
-                  onClick={() => setMinutes(item.minutes)}
-                  className={cn(
-                    "rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                    item.minutes === window.minutes ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
-                  )}
-                >
-                  {item.minutes} min
-                </button>
-              ))}
-            </div>
-          </div>
-          <StatBars stats={window.stats} />
-        </section>
-      ) : null}
-    </div>
+    <section className="ls-card p-4 md:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-bold">Últimos minutos</h3>
+        <div className="flex rounded-full bg-surface-2 p-0.5">
+          {live.windows.map((item) => (
+            <button
+              key={item.minutes}
+              type="button"
+              onClick={() => setMinutes(item.minutes)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                item.minutes === window.minutes ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
+              )}
+            >
+              {item.minutes} min
+            </button>
+          ))}
+        </div>
+      </div>
+      <StatBars stats={window.stats} />
+    </section>
   );
 }
 

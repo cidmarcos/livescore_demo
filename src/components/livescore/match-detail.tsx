@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Clock,
   Crosshair,
@@ -18,12 +20,14 @@ import { toast } from "sonner";
 
 import { Crest } from "@/components/livescore/crest";
 import { Flag as CountryFlag } from "@/components/livescore/flag";
-import { LiveOpta, OddsPanel, PressurePanel, ProbabilityPanel } from "@/components/livescore/live-extra";
+import { BookmakerOdds, PriceMarkets } from "@/components/livescore/bookmaker-odds";
+import { LiveOpta, MinuteWindows, OddsPanel, PressurePanel, ProbabilityPanel } from "@/components/livescore/live-extra";
 import { StatBars } from "@/components/livescore/stat-bars";
-import { legText, UpcomingPanels, UpcomingStats } from "@/components/livescore/upcoming-preview";
+import { legText, UpcomingPanels, UpcomingProbability, UpcomingStats } from "@/components/livescore/upcoming-preview";
 import { formationRows, lastName } from "@/components/livescore/formation";
 import { MomentumChart } from "@/components/livescore/momentum-chart";
 import {
+  fetchBookmakerOdds,
   fetchDetail,
   fetchEvents,
   fetchLineups,
@@ -40,18 +44,109 @@ import {
   teamSide,
   type EventKind,
 } from "@/lib/livescore/parse";
-import type { LineupPlayer, LineupSide, MatchCard, Phase, StandingGroup } from "@/lib/livescore/types";
+import type { LineupPlayer, LineupSide, MatchCard, Phase, StandingGroup, UpcomingPreview } from "@/lib/livescore/types";
 import { cn } from "@/lib/utils";
 
 const baseTabs = [
   ["detalhes", "Detalhes"],
   ["estatisticas", "Estatísticas"],
-  ["comentario", "Lances"],
   ["formacoes", "Formações"],
   ["classificacao", "Classificação"],
 ] as const;
 
-type TabId = (typeof baseTabs)[number][0] | "pressao" | "opta" | "probabilidade" | "odds";
+type TabId = (typeof baseTabs)[number][0] | "aovivo" | "prelive" | "pressao" | "opta" | "probabilidade" | "odds";
+
+function MatchTabs({
+  tabs,
+  tab,
+  onChange,
+}: {
+  tabs: [TabId, string][];
+  tab: TabId;
+  onChange: (id: TabId) => void;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+  const tabKey = tabs.map(([id]) => id).join("|");
+
+  const measure = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  };
+
+  useEffect(() => {
+    measure();
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => measure();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [tabKey]);
+
+  useEffect(() => {
+    const active = scroller.current?.querySelector<HTMLElement>("[data-active='true']");
+    active?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [tab, tabKey]);
+
+  const nudge = (direction: -1 | 1) => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * Math.max(140, Math.round(el.clientWidth * 0.7)), behavior: "smooth" });
+  };
+
+  return (
+    <div className="sticky top-[116px] z-20 md:top-0">
+      <div className="ls-card flex items-center gap-1 p-1.5 backdrop-blur-xl">
+        <button
+          type="button"
+          aria-label="Abas à esquerda"
+          disabled={!canLeft}
+          onClick={() => nudge(-1)}
+          className="grid size-8 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <div ref={scroller} className="ls-no-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          {tabs.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              data-active={tab === id}
+              onClick={() => onChange(id)}
+              className={cn(
+                "shrink-0 rounded-xl px-3.5 py-2 text-xs font-semibold uppercase tracking-wide transition-all",
+                tab === id
+                  ? "ls-brand text-white shadow-[0_8px_20px_-8px_var(--color-glow)]"
+                  : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          aria-label="Abas à direita"
+          disabled={!canRight}
+          onClick={() => nudge(1)}
+          className="grid size-8 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function MatchDetail({
   fixtureId,
@@ -73,6 +168,13 @@ export function MatchDetail({
     retry: retryLivescore,
     refetchInterval: isLive ? 60_000 : false,
   });
+  const prelive = useQuery({
+    queryKey: ["livescore", "detail", fixtureId, "upcoming"],
+    queryFn: () => fetchDetail(fixtureId, "upcoming"),
+    enabled: isLive || detail.data?.phase === "live",
+    staleTime: 10 * 60_000,
+    retry: retryLivescore,
+  });
   const events = useQuery({
     queryKey: ["livescore", "events", fixtureId, phase],
     queryFn: () => fetchEvents(fixtureId, phase),
@@ -83,6 +185,13 @@ export function MatchDetail({
     queryKey: ["livescore", "radar"],
     queryFn: fetchRadars,
     staleTime: 60_000,
+  });
+  const bookmakerOdds = useQuery({
+    queryKey: ["livescore", "bookmaker-odds", fixtureId],
+    queryFn: () => fetchBookmakerOdds(fixtureId),
+    enabled: tab === "odds",
+    staleTime: 10 * 60_000,
+    retry: retryLivescore,
   });
   const lineups = useQuery({
     queryKey: ["livescore", "lineups", fixtureId],
@@ -110,16 +219,24 @@ export function MatchDetail({
   );
 
   const odds = detail.data?.odds ?? null;
-  const liveExtra = isLive ? (detail.data?.live ?? null) : null;
-  const hasPressure = Boolean(liveExtra && (liveExtra.pressure.length > 0 || liveExtra.windows.length > 0));
+  const matchPhase = detail.data?.phase ?? (phase === "auto" ? null : phase);
+  const upcoming = matchPhase === "upcoming";
+  const liveNow = matchPhase === "live";
+  const preview = upcoming ? (detail.data?.preview ?? null) : (prelive.data?.preview ?? null);
+  const previewMarkets = preview?.markets ?? [];
+  const modelProbability = (preview?.probability?.groups?.length ?? 0) > 0;
+  const liveExtra = liveNow ? (detail.data?.live ?? null) : null;
+  const hasPressure = Boolean(liveExtra && liveExtra.pressure.length > 0);
   const hasOpta = Boolean(liveExtra && liveExtra.opta.length > 0);
-  const hasOdds = Boolean(odds || (liveExtra && liveExtra.books.length > 0));
   const tabs: [TabId, string][] = [["detalhes", "Detalhes"]];
+  if (liveNow) tabs.push(["aovivo", "Ao vivo"]);
+  if (matchPhase === "ended") tabs.push(["estatisticas", "Estatísticas"]);
   if (hasPressure) tabs.push(["pressao", "Pressão"]);
   if (hasOpta) tabs.push(["opta", "Opta"]);
-  if (odds) tabs.push(["probabilidade", "Probabilidade"]);
-  if (hasOdds) tabs.push(["odds", "Odds"]);
-  for (const [id, label] of baseTabs.slice(1)) tabs.push([id, label]);
+  if (upcoming || hasPrelive(preview)) tabs.push(["prelive", "Pré-live"]);
+  if (modelProbability || odds) tabs.push(["probabilidade", "Probabilidade"]);
+  tabs.push(["odds", "Odds"]);
+  for (const [id, label] of baseTabs.slice(2)) tabs.push([id, label]);
   const tabKey = tabs.map(([id]) => id).join("|");
   useEffect(() => {
     if (!tabKey.split("|").includes(tab)) setTab("detalhes");
@@ -143,8 +260,6 @@ export function MatchDetail({
   }
 
   const kickoff = formatKickoff(match.kickoff);
-  const preview = detail.data?.preview ?? null;
-  const upcoming = match.phase === "upcoming";
   const knockout = legText(preview?.matchLeg ?? null);
   const showHt =
     match.score?.htHome != null && match.score?.htAway != null && match.status !== "HT_1ST";
@@ -258,25 +373,7 @@ export function MatchDetail({
         </div>
       </div>
 
-      <div className="sticky top-[116px] z-20 md:top-0">
-        <div className="ls-card ls-no-scrollbar flex gap-1 overflow-x-auto p-1.5 backdrop-blur-xl">
-          {tabs.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={cn(
-                "shrink-0 rounded-xl px-3.5 py-2 text-xs font-semibold uppercase tracking-wide transition-all",
-                tab === id
-                  ? "ls-brand text-white shadow-[0_8px_20px_-8px_var(--color-glow)]"
-                  : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <MatchTabs tabs={tabs} tab={tab} onChange={setTab} />
 
       <div key={tab} className="ls-enter">
         {tab === "detalhes" ? (
@@ -285,14 +382,13 @@ export function MatchDetail({
           ) : (
             <div className="space-y-4">
               <MomentumChart points={momentum} match={match} />
-              {(detail.data?.stats ?? []).length > 0 ? (
-                <Panel title="Resumo">
-                  <StatBars stats={(detail.data?.stats ?? []).slice(0, 4)} />
+              {events.isPending && eventList.length === 0 ? (
+                <Panel title="Lances">
+                  <PanelSkeleton />
                 </Panel>
-              ) : null}
-              {eventList.length > 0 ? (
-                <Panel title="Últimos lances">
-                  <Timeline events={eventList.slice(-5)} home={match.homeName} away={match.awayName} />
+              ) : eventList.length > 0 ? (
+                <Panel title="Lances">
+                  <Timeline events={eventList} home={match.homeName} away={match.awayName} />
                 </Panel>
               ) : null}
             </div>
@@ -300,29 +396,65 @@ export function MatchDetail({
         ) : null}
         {tab === "pressao" && liveExtra ? <PressurePanel live={liveExtra} /> : null}
         {tab === "opta" && liveExtra ? <LiveOpta live={liveExtra} /> : null}
-        {tab === "probabilidade" && odds ? <ProbabilityPanel odds={odds} /> : null}
-        {tab === "odds" ? <OddsPanel odds={odds} books={liveExtra?.books ?? []} /> : null}
+        {tab === "probabilidade" ? (
+          upcoming && modelProbability ? (
+            <UpcomingProbability groups={preview?.probability?.groups ?? []} />
+          ) : odds ? (
+            <ProbabilityPanel odds={odds} />
+          ) : null
+        ) : null}
+        {tab === "odds" ? (
+          <div className="space-y-4">
+            {upcoming && previewMarkets.length > 0 ? (
+              <PriceMarkets markets={previewMarkets} />
+            ) : (
+              <OddsPanel odds={odds} books={liveExtra?.books ?? []} />
+            )}
+            {upcoming && preview && preview.books.length > 0 && previewMarkets.length > 0 ? (
+              <OddsPanel odds={null} books={preview.books} />
+            ) : null}
+            <BookmakerOdds
+              loading={bookmakerOdds.isPending}
+              failed={bookmakerOdds.isError}
+              books={bookmakerOdds.data?.books ?? []}
+            />
+          </div>
+        ) : null}
+        {tab === "aovivo" ? (
+          <div className="space-y-4">
+            <Panel title="Estatísticas da partida">
+              {detail.isPending && !detail.data ? (
+                <PanelSkeleton />
+              ) : (detail.data?.stats ?? []).length === 0 ? (
+                <Muted>Estatísticas ainda não disponíveis.</Muted>
+              ) : (
+                <StatBars stats={detail.data?.stats ?? []} />
+              )}
+            </Panel>
+            {liveExtra && liveExtra.windows.length > 0 ? <MinuteWindows live={liveExtra} /> : null}
+          </div>
+        ) : null}
+        {tab === "prelive" ? (
+          <Panel title="Médias antes do jogo">
+            {upcoming && detail.isPending && !detail.data ? (
+              <PanelSkeleton />
+            ) : liveNow && prelive.isPending ? (
+              <PanelSkeleton />
+            ) : preview ? (
+              <UpcomingStats preview={preview} />
+            ) : (
+              <Muted>Médias de antes do jogo ainda não disponíveis.</Muted>
+            )}
+          </Panel>
+        ) : null}
         {tab === "estatisticas" ? (
-          <Panel title={upcoming ? "Médias antes do jogo" : "Estatísticas da partida"}>
+          <Panel title="Estatísticas da partida">
             {detail.isPending && !detail.data ? (
               <PanelSkeleton />
-            ) : upcoming && preview ? (
-              <UpcomingStats preview={preview} />
             ) : (detail.data?.stats ?? []).length === 0 ? (
               <Muted>Estatísticas ainda não disponíveis.</Muted>
             ) : (
               <StatBars stats={detail.data?.stats ?? []} />
-            )}
-          </Panel>
-        ) : null}
-        {tab === "comentario" ? (
-          <Panel title="Lance a lance">
-            {events.isPending ? (
-              <PanelSkeleton />
-            ) : eventList.length === 0 ? (
-              <Muted>Sem lances publicados.</Muted>
-            ) : (
-              <Timeline events={eventList} home={match.homeName} away={match.awayName} />
             )}
           </Panel>
         ) : null}
@@ -811,6 +943,16 @@ function shareMatch(match: MatchCard) {
     .writeText(url)
     .then(() => toast("Link copiado", { description: title }))
     .catch(() => toast("Não foi possível copiar o link"));
+}
+
+function hasPrelive(preview: UpcomingPreview | null) {
+  if (!preview) return false;
+  return (
+    (preview.statGroups?.length ?? 0) > 0 ||
+    preview.teamStats.length > 0 ||
+    preview.extraStats.length > 0 ||
+    (preview.facts?.length ?? 0) > 0
+  );
 }
 
 function retryLivescore(failureCount: number, error: unknown) {

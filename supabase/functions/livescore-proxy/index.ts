@@ -48,6 +48,7 @@ Deno.serve(async (request) => {
     if (action === "lineups") return json(await lineupsAction(apiKey, url));
     if (action === "table") return json(await tableAction(apiKey, url));
     if (action === "radar") return json(await radarAction(apiKey));
+    if (action === "bookmaker_odds") return json(await bookmakerOddsAction(apiKey, url));
     return json({ error: "Ação desconhecida." }, 400);
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 502;
@@ -82,7 +83,7 @@ async function detailAction(apiKey: string, url: URL) {
   const phase = await resolvePhase(apiKey, fixtureId, url.searchParams.get("phase"));
   const cacheKey =
     phase === "upcoming"
-      ? `detail:upcoming:v2:${fixtureId}`
+      ? `detail:upcoming:v4:${fixtureId}`
       : phase === "live"
         ? `detail:live:v2:${fixtureId}`
         : `detail:${phase}:${fixtureId}`;
@@ -175,6 +176,19 @@ async function tableAction(apiKey: string, url: URL) {
         away: mapGroups(tables.away),
       },
     };
+  });
+}
+
+async function bookmakerOddsAction(apiKey: string, url: URL) {
+  const fixtureId = readId(url.searchParams.get("fixture_id"), "fixture_id");
+  return cached(`bookmaker-odds:v1:${fixtureId}`, TTL.lineups, async () => {
+    try {
+      const data = await oneObject(apiKey, `/matches-bookmaker-odds?fixture_id=${fixtureId}`);
+      return { books: readBookmakerOdds(data) };
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) return { books: [] };
+      throw error;
+    }
   });
 }
 
@@ -465,8 +479,16 @@ function readPreview(row: Record<string, any>) {
     standings: readStandings(row.standings),
     probability: readProbability(row.probability),
     books: readBooks(row.odds),
+    markets: readPreviewMarkets(row.odds),
     teamStats: pairStats(row.stats?.home, row.stats?.away, TEAM_STATS),
     extraStats: pairExtra(row.stats_extra?.home, row.stats_extra?.away),
+    statGroups: [
+      ...readTeamGroups(row.stats?.home, row.stats?.away),
+      ...readExtraGroups(row.stats_extra?.home, row.stats_extra?.away),
+    ],
+    facts: readFacts(row.stats?.match),
+    venue: venueName(row.venue),
+    season: textOrNull(row.season),
     correctScores: readCorrectScores(row.correct_scores),
     matchLeg: readMatchLeg(row.match_leg),
     firstLeg: readFirstLeg(row.first_leg_score),
@@ -507,23 +529,124 @@ function readStandings(raw: Record<string, any> | null) {
   return standings;
 }
 
+const PROBABILITY_GROUPS: [string, [string, string][]][] = [
+  ["Resultado", [["home_win", "Casa"], ["draw", "Empate"], ["away_win", "Fora"]]],
+  ["1º tempo", [["home_win_ht", "Casa"], ["draw_ht", "Empate"], ["away_win_ht", "Fora"]]],
+  ["Primeiro gol", [["home_score_first", "Casa"], ["draw_score_first", "Nenhum"], ["away_score_first", "Fora"]]],
+  ["Dupla chance", [["double_chance_1x", "1X"], ["double_chance_12", "12"], ["double_chance_x2", "X2"]]],
+  ["Gols", [
+    ["o05", "Over 0.5"], ["u05", "Under 0.5"],
+    ["o15", "Over 1.5"], ["u15", "Under 1.5"],
+    ["o25", "Over 2.5"], ["u25", "Under 2.5"],
+    ["o35", "Over 3.5"], ["u35", "Under 3.5"],
+    ["o45", "Over 4.5"], ["u45", "Under 4.5"],
+    ["o0_1h_goals", "Over 0.5 no 1º tempo"],
+  ]],
+  ["Ambas marcam", [["btts", "Sim"], ["btts_no", "Não"]]],
+  ["Gols dos times", [
+    ["o05_home_goals", "Casa over 0.5"],
+    ["o15_home_goals", "Casa over 1.5"],
+    ["o05_away_goals", "Fora over 0.5"],
+    ["o15_away_goals", "Fora over 1.5"],
+  ]],
+];
+
+const CORNER_LINES: [string, string, string | null][] = [
+  ["o4_corners", "Over 4.5", null],
+  ["o5_corners", "Over 5.5", null],
+  ["o6_corners", "Over 6.5", null],
+  ["o7_corners", "Over 7.5", null],
+  ["o8_corners", "Over 8.5", "o85_corners"],
+  ["o9_corners", "Over 9.5", "o95_corners"],
+  ["o10_corners", "Over 10.5", "o105_corners"],
+  ["o11_corners", "Over 11.5", null],
+];
+
 function readProbability(raw: Record<string, any> | null) {
-  if (!raw || typeof raw !== "object") return null;
-  const home = numberOrNull(raw.home_win ?? raw.home);
-  const draw = numberOrNull(raw.draw);
-  const away = numberOrNull(raw.away_win ?? raw.away);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const scale = probabilityScale(raw);
+  const num = (value: unknown) => {
+    const parsed = numberOrNull(value);
+    if (parsed == null) return null;
+    return scale ? parsed * 100 : parsed;
+  };
+  const home = num(raw.home_win ?? raw.home);
+  const draw = num(raw.draw);
+  const away = num(raw.away_win ?? raw.away);
+  const known = new Set(PROBABILITY_GROUPS.flatMap(([, lines]) => lines.map(([key]) => key)));
+  known.add("o05_1h");
+  for (const [key, , alias] of CORNER_LINES) {
+    known.add(key);
+    if (alias) known.add(alias);
+  }
+  const groups = PROBABILITY_GROUPS.flatMap(([title, lines]) => {
+    const rows = lines.flatMap(([key, label]) => {
+      const value = num(key === "o0_1h_goals" ? raw.o0_1h_goals ?? raw.o05_1h : raw[key]);
+      return value == null ? [] : [{ key, label, value }];
+    });
+    return rows.length > 0 ? [{ title, lines: rows }] : [];
+  });
+  const corners = CORNER_LINES.flatMap(([key, label, alias]) => {
+    const value = num(raw[key] ?? (alias ? raw[alias] : null));
+    return value == null ? [] : [{ key, label, value }];
+  });
+  if (corners.length > 0) groups.push({ title: "Escanteios", lines: corners });
+  const others = Object.entries(raw).flatMap(([key, value]) => {
+    if (known.has(key) || key === "home" || key === "away") return [];
+    const parsed = num(value);
+    return parsed == null ? [] : [{ key, label: labelFromKey(key), value: parsed }];
+  });
+  if (others.length > 0) groups.push({ title: "Outros", lines: others });
   if (home == null || draw == null || away == null) return null;
   return {
     home,
     draw,
     away,
-    btts: numberOrNull(raw.btts ?? raw.btts_yes),
-    over25: numberOrNull(raw.o25 ?? raw.over25 ?? raw.over_25),
-    under25: numberOrNull(raw.u25 ?? raw.under25 ?? raw.under_25),
+    btts: num(raw.btts ?? raw.btts_yes),
+    over25: num(raw.o25 ?? raw.over25 ?? raw.over_25),
+    under25: num(raw.u25 ?? raw.under25 ?? raw.under_25),
+    groups,
   };
 }
 
+function probabilityScale(raw: Record<string, any>) {
+  const sample = [raw.home_win ?? raw.home, raw.draw, raw.away_win ?? raw.away, raw.btts, raw.o25]
+    .map((value) => numberOrNull(value))
+    .filter((value): value is number => value != null);
+  return sample.length > 0 && sample.every((value) => value <= 1);
+}
+
 const MARKET_KEYS = new Set(["ft_result", "ht_result", "btts", "over_under", "correct_score", "correct_scores"]);
+
+function readPreviewMarkets(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const known = new Set(BOOKMAKER_MARKETS);
+  const keys = [
+    ...BOOKMAKER_MARKETS.filter((key) => isPriceMap(raw[key])),
+    ...Object.keys(raw).filter((key) => !known.has(key) && isPriceMap(raw[key]) && !isBookmakerQuote(raw[key])),
+  ];
+  return keys.flatMap((key) => {
+    const outcomes = readFlatPrices(raw[key]);
+    return outcomes.length > 0 ? [{ key, outcomes }] : [];
+  });
+}
+
+function isPriceMap(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isBookmakerQuote(value: Record<string, any>) {
+  if (!priceTriple(value)) return false;
+  return Object.keys(value).every((key) => key === "home" || key === "draw" || key === "away");
+}
+
+function readFlatPrices(raw: Record<string, any>) {
+  return Object.entries(raw).flatMap(([key, value]) => {
+    const closing = numberOrNull(value);
+    if (closing == null || closing <= 1) return [];
+    return [{ key, opening: null, closing, peak: null }];
+  });
+}
 
 function readBooks(raw: Record<string, any> | null) {
   if (!raw || typeof raw !== "object") return [];
@@ -559,6 +682,204 @@ function pairStats(
   });
 }
 
+const STAT_GROUPS: [string, [string, string][]][] = [
+  ["Desempenho", [
+    ["ppj", "Pontos por jogo"],
+    ["win_pct", "Vitórias"],
+    ["draw_pct", "Empates"],
+    ["loss_pct", "Derrotas"],
+    ["games_used", "Jogos na amostra"],
+  ]],
+  ["1º tempo", [
+    ["ppj_ht", "Pontos por jogo"],
+    ["win_ht_pct", "Vitórias"],
+    ["draw_ht_pct", "Empates"],
+    ["loss_ht_pct", "Derrotas"],
+  ]],
+  ["Gols", [
+    ["avg_goals_scored", "Gols marcados"],
+    ["avg_goals_conceded", "Gols sofridos"],
+    ["avg_goals", "Média de gols"],
+    ["avg_goals_scored_ht", "Gols marcados no 1º tempo"],
+    ["avg_goals_conceded_ht", "Gols sofridos no 1º tempo"],
+    ["avg_goals_ht", "Média no 1º tempo"],
+    ["xg", "xG"],
+  ]],
+  ["Especial", [
+    ["btts_pct", "Ambas marcam"],
+    ["btts_no_pct", "Ambas não marcam"],
+    ["clean_sheet_pct", "Sem sofrer gols"],
+    ["failed_to_score_pct", "Não marcou"],
+  ]],
+  ["Over", [
+    ["over_05_pct", "Over 0.5"],
+    ["over_15_pct", "Over 1.5"],
+    ["over_25_pct", "Over 2.5"],
+    ["over_35_pct", "Over 3.5"],
+    ["over_45_pct", "Over 4.5"],
+    ["over_55_pct", "Over 5.5"],
+    ["over_05_ht_pct", "Over 0.5 no 1º tempo"],
+    ["over_15_ht_pct", "Over 1.5 no 1º tempo"],
+  ]],
+  ["Under", [
+    ["under_05_pct", "Under 0.5"],
+    ["under_15_pct", "Under 1.5"],
+    ["under_25_pct", "Under 2.5"],
+    ["under_35_pct", "Under 3.5"],
+    ["under_45_pct", "Under 4.5"],
+    ["under_55_pct", "Under 5.5"],
+    ["under_05_ht_pct", "Under 0.5 no 1º tempo"],
+    ["under_15_ht_pct", "Under 1.5 no 1º tempo"],
+  ]],
+  ["Gols marcados e sofridos", [
+    ["over_15_scored_pct", "Marcou over 1.5"],
+    ["over_25_scored_pct", "Marcou over 2.5"],
+    ["over_05_conceded_pct", "Sofreu over 0.5"],
+    ["over_15_conceded_pct", "Sofreu over 1.5"],
+    ["over_25_conceded_pct", "Sofreu over 2.5"],
+  ]],
+  ["Escanteios", [
+    ["corners_ft_avg", "Média"],
+    ["corners_ht_avg", "Média no 1º tempo"],
+  ]],
+];
+
+const FACT_GROUPS: [string, [string, string][]][] = [
+  ["Projeção de gols", [
+    ["projected_home_goals_ft", "Casa"],
+    ["projected_away_goals_ft", "Visitante"],
+    ["projected_total_goals_ft", "Total"],
+    ["projected_home_goals_ht", "Casa no 1º tempo"],
+    ["projected_away_goals_ht", "Visitante no 1º tempo"],
+    ["projected_total_goals_ht", "Total no 1º tempo"],
+  ]],
+  ["Médias combinadas", [
+    ["combined_goals_ft_avg", "Gols"],
+    ["combined_goals_ht_avg", "Gols no 1º tempo"],
+    ["combined_xg_avg", "xG"],
+    ["combined_corners_ft_avg", "Escanteios"],
+    ["combined_corners_ht_avg", "Escanteios no 1º tempo"],
+  ]],
+  ["Diferença entre os times", [
+    ["goals_ft_avg_difference", "Gols"],
+    ["goals_ht_avg_difference", "Gols no 1º tempo"],
+    ["xg_difference", "xG"],
+    ["ppg_ft_difference", "Pontos por jogo"],
+    ["ppg_ht_difference", "Pontos no 1º tempo"],
+  ]],
+  ["Combinação", [
+    ["combined_btts_yes_percentage", "Ambas marcam"],
+    ["combined_btts_no_percentage", "Ambas não marcam"],
+    ["combined_over05_ft_percentage", "Over 0.5"],
+    ["combined_over15_ft_percentage", "Over 1.5"],
+    ["combined_over25_ft_percentage", "Over 2.5"],
+    ["combined_over35_ft_percentage", "Over 3.5"],
+    ["combined_over45_ft_percentage", "Over 4.5"],
+    ["combined_over55_ft_percentage", "Over 5.5"],
+    ["combined_under25_ft_percentage", "Under 2.5"],
+    ["combined_over05_ht_percentage", "Over 0.5 no 1º tempo"],
+    ["combined_over15_ht_percentage", "Over 1.5 no 1º tempo"],
+  ]],
+];
+
+type ExtraField = { key: string; label: string; kind: "avg" | "pct" | "simple" | "over"; line?: string };
+
+function readTeamGroups(home: Record<string, any> | null, away: Record<string, any> | null) {
+  return STAT_GROUPS.flatMap(([title, fields]) => {
+    const stats = pairStats(home, away, fields);
+    return stats.length > 0 ? [{ title, stats }] : [];
+  });
+}
+
+function readFacts(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object") return [];
+  return FACT_GROUPS.flatMap(([title, fields]) => {
+    const lines = fields.flatMap(([key, label]) => {
+      const value = numberOrNull(raw[key]);
+      return value == null ? [] : [{ key, label, value }];
+    });
+    return lines.length > 0 ? [{ title, lines }] : [];
+  });
+}
+
+function readExtraGroups(home: Record<string, any> | null, away: Record<string, any> | null) {
+  if (!home || !away) return [];
+  return extraCatalog().flatMap((group) => {
+    const stats = group.fields.flatMap((field) => {
+      const homeValue = extraNumber(home, field);
+      const awayValue = extraNumber(away, field);
+      if (homeValue == null || awayValue == null) return [];
+      const key = field.line ? `${field.key}_${field.line}` : field.key;
+      const percent = field.kind === "pct" || field.kind === "over" || /accuracy|conversion/.test(field.key);
+      return [{ key: percent ? `${key}_pct` : key, label: field.label, home: homeValue, away: awayValue }];
+    });
+    return stats.length > 0 ? [{ title: group.title, stats }] : [];
+  });
+}
+
+function extraCatalog(): { title: string; fields: ExtraField[] }[] {
+  const over = (key: string, lines: string[]) =>
+    lines.map((line) => ({ key, line, label: `Over ${line.slice(1)}.5`, kind: "over" as const }));
+  return [
+    { title: "Momento dos gols", fields: [
+      { key: "scored_first", label: "Marcou primeiro", kind: "pct" },
+      { key: "conceded_first", label: "Sofreu primeiro", kind: "pct" },
+      { key: "scored_after_70", label: "Marcou após os 70", kind: "pct" },
+      { key: "conceded_after_70", label: "Sofreu após os 70", kind: "pct" },
+      { key: "btts_1h", label: "Ambas marcam no 1º tempo", kind: "pct" },
+      { key: "btts_2h", label: "Ambas marcam no 2º tempo", kind: "pct" },
+    ] },
+    { title: "xG recente", fields: [
+      { key: "xg_for", label: "xG a favor", kind: "avg" },
+      { key: "xg_against", label: "xG contra", kind: "avg" },
+      { key: "xg_total", label: "xG total", kind: "avg" },
+    ] },
+    { title: "Finalizações", fields: [
+      { key: "shots_for", label: "A favor", kind: "avg" },
+      { key: "shots_against", label: "Sofridas", kind: "avg" },
+      { key: "shots_on_for", label: "No gol", kind: "avg" },
+      { key: "shots_on_against", label: "No gol sofridas", kind: "avg" },
+      { key: "sot_accuracy", label: "Precisão", kind: "simple" },
+      { key: "shot_conversion", label: "Conversão", kind: "simple" },
+    ] },
+    { title: "Escanteios recentes", fields: [
+      { key: "corners_for", label: "A favor", kind: "avg" },
+      { key: "corners_against", label: "Contra", kind: "avg" },
+      { key: "corners_total", label: "Total", kind: "avg" },
+      { key: "corners_1h_for", label: "A favor no 1º tempo", kind: "avg" },
+      ...over("corners_over", ["o7", "o8", "o9", "o10", "o11"]),
+    ] },
+    { title: "Cartões", fields: [
+      { key: "cards_for", label: "A favor", kind: "avg" },
+      { key: "cards_against", label: "Contra", kind: "avg" },
+      { key: "yellow_cards_for", label: "Amarelos", kind: "avg" },
+      { key: "red_cards_for", label: "Vermelhos", kind: "avg" },
+      ...over("cards_over", ["o2", "o3", "o4", "o5"]),
+    ] },
+    { title: "Posse e ataques", fields: [
+      { key: "possession_for", label: "Posse", kind: "avg" },
+      { key: "attacks_for", label: "Ataques", kind: "avg" },
+      { key: "dangerous_attacks_for", label: "Ataques perigosos", kind: "avg" },
+      { key: "fouls_committed", label: "Faltas cometidas", kind: "avg" },
+      { key: "fouls_won", label: "Faltas sofridas", kind: "avg" },
+    ] },
+  ];
+}
+
+function extraNumber(side: Record<string, any>, field: ExtraField) {
+  const node = side[field.key];
+  if (field.kind === "avg") return numberOrNull(node?.total_avg);
+  if (field.kind === "pct") return numberOrNull(node?.total_percentage);
+  if (field.kind === "over") return numberOrNull(node?.[field.line ?? ""]?.total_percentage);
+  return numberOrNull(node?.total ?? node);
+}
+
+function venueName(value: unknown) {
+  if (typeof value === "string") return textOrNull(value);
+  if (value && typeof value === "object") return textOrNull((value as { name?: unknown }).name);
+  return null;
+}
+
 function pairExtra(home: Record<string, any> | null, away: Record<string, any> | null) {
   if (!home || !away) return [];
   const skip = new Set(["team_id", "id"]);
@@ -582,7 +903,7 @@ function readCorrectScores(raw: Record<string, any> | null) {
       return probability != null && probability > 0 ? [{ score, probability }] : [];
     })
     .sort((a, b) => b.probability - a.probability)
-    .slice(0, 6);
+    .slice(0, 12);
   const fractional = rows.length > 0 && rows.every((row) => row.probability <= 1);
   return fractional ? rows.map((row) => ({ ...row, probability: row.probability * 100 })) : rows;
 }
@@ -769,6 +1090,64 @@ function optaTitle(value: unknown) {
   };
   const text = textOrNull(value) ?? "Opta";
   return labels[text.toLowerCase()] ?? text;
+}
+
+const BOOKMAKER_MARKETS = [
+  "ft_result",
+  "ht_result",
+  "double_chance",
+  "dnb",
+  "btts",
+  "btts_1h",
+  "btts_2h",
+  "btts_o25",
+  "highest_scoring_half",
+  "asian_handicap",
+  "total_goals",
+  "total_goals_1h",
+  "total_goals_2h",
+  "home_goals",
+  "away_goals",
+  "goal_line",
+  "goal_line_1h",
+  "total_corners",
+  "asian_corners",
+  "asian_corners_1h",
+];
+
+function readBookmakerOdds(row: Record<string, any>) {
+  const books = [
+    ["pinnacle", "Pinnacle", row.pinnacle ?? row.Pinnacle],
+    ["bet365", "Bet365", row.bet365 ?? row.Bet365],
+  ] as const;
+  return books.flatMap(([, name, markets]) => {
+    const read = readBookmakerMarkets(markets);
+    return read.length > 0 ? [{ name, markets: read }] : [];
+  });
+}
+
+function readBookmakerMarkets(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const known = new Set(BOOKMAKER_MARKETS);
+  const keys = [
+    ...BOOKMAKER_MARKETS.filter((key) => raw[key]),
+    ...Object.keys(raw).filter((key) => !known.has(key)),
+  ];
+  return keys.flatMap((key) => {
+    const outcomes = readBookmakerOutcomes(raw[key]);
+    return outcomes.length > 0 ? [{ key, outcomes }] : [];
+  });
+}
+
+function readBookmakerOutcomes(raw: Record<string, any> | null) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  return Object.entries(raw).flatMap(([key, value]) => {
+    const opening = numberOrNull(value?.opening);
+    const closing = numberOrNull(value?.closing);
+    const peak = numberOrNull(value?.peak);
+    if (opening == null && closing == null && peak == null) return [];
+    return [{ key, opening, closing, peak }];
+  });
 }
 
 function readOdds(row: Record<string, any>) {

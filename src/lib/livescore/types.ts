@@ -44,6 +44,33 @@ export type ScoreChance = {
   probability: number;
 };
 
+export type ChanceLine = {
+  key: string;
+  label: string;
+  value: number;
+};
+
+export type ChanceGroup = {
+  title: string;
+  lines: ChanceLine[];
+};
+
+export type FactLine = {
+  key: string;
+  label: string;
+  value: number;
+};
+
+export type FactGroup = {
+  title: string;
+  lines: FactLine[];
+};
+
+export type StatGroup = {
+  title: string;
+  stats: StatLine[];
+};
+
 export type UpcomingPreview = {
   competition: {
     type: string | null;
@@ -52,6 +79,8 @@ export type UpcomingPreview = {
     isCup: boolean | null;
     predictability: string | null;
   } | null;
+  venue?: string | null;
+  season?: string | null;
   standings: {
     homePosition: number | null;
     awayPosition: number | null;
@@ -65,10 +94,14 @@ export type UpcomingPreview = {
     btts: number | null;
     over25: number | null;
     under25: number | null;
+    groups?: ChanceGroup[];
   } | null;
   books: BookPrice[];
+  markets: BookmakerMarket[];
   teamStats: StatLine[];
   extraStats: StatLine[];
+  statGroups?: StatGroup[];
+  facts?: FactGroup[];
   correctScores: ScoreChance[];
   matchLeg: "single" | "first" | "second" | null;
   firstLeg: { home: number; away: number } | null;
@@ -98,6 +131,27 @@ export type LiveExtra = {
   windows: LiveWindow[];
   opta: OptaGroup[];
   books: BookPrice[];
+};
+
+export type BookmakerPrice = {
+  key: string;
+  opening: number | null;
+  closing: number | null;
+  peak: number | null;
+};
+
+export type BookmakerMarket = {
+  key: string;
+  outcomes: BookmakerPrice[];
+};
+
+export type BookmakerBook = {
+  name: string;
+  markets: BookmakerMarket[];
+};
+
+export type BookmakerOddsPayload = {
+  books: BookmakerBook[];
 };
 
 export type DetailPayload = {
